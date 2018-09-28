@@ -1,25 +1,32 @@
 # Copyright (c) 2014-2018 Michael Hirsch, Ph.D.
-#
-# Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
-# 1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
-# 2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
-from six import string_types
 from datetime import datetime
 from dateutil.parser import parse
+import numpy as np
 
-def str2dt(t):
+
+def str2dt(time: datetime) -> np.ndarray:
     """
     Converts times in string or list of strings to datetime(s)
 
     output: datetime
     """
-    if isinstance(t, datetime):
-        return t
-    elif isinstance(t, string_types):
-        t = parse(t)
-    elif t is not None:
-        t = [parse(T) for T in t]
+    if isinstance(time, datetime):
+        return time
+    elif isinstance(time, str):
+        return parse(time)
+    elif isinstance(time, np.datetime64):
+        return time.astype(datetime)
+    else:  # some sort of iterable
+        try:
+            if isinstance(time[0], datetime):
+                return time
+            elif isinstance(time[0], np.datetime64):
+                return time.astype(datetime)
+            elif isinstance(time[0], str):
+                return [parse(t) for t in time]
+        except (IndexError, TypeError):
+            pass
 
-    return t
+        # last resort--assume pandas/xarray
+
+        return time.values.astype('datetime64[us]').astype(datetime)

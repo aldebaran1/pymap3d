@@ -1,44 +1,30 @@
 language: python
-fast_finish: true
-
-python:
-  - 3.5
-  - 3.6
-  
-os:
-  - linux
-  
 group: travis_latest
-
-env: FC=gfortran-6
 
 git:
   depth: 3
-  
-  
-addons:
-  apt:
-    sources:
-      - ubuntu-toolchain-r-test
-    packages:
-      - gfortran-6
-      - octave
+  quiet: true
 
+python:
+- 3.6
+- 3.5
 
-install: 
-  - pip -q install -e .[tests]
-  - cd bin
-  - cmake ..
-  - make
+os:
+- linux
 
-script: 
-  - make test
+install:
+- pip install -e .[tests]
+- if [[ $TRAVIS_PYTHON_VERSION == 3.6* ]]; then pip install -e .[cov]; fi
 
-after_success: 
-  - if [[ $TRAVIS_PYTHON_VERSION == 3.6* ]]; then
-    coverage run ../tests/test_all.py;
-    coveralls;
-    fi
-    
-after_failure:
-  - ctest -V
+script:
+- pytest -rsv
+
+- if [[ $TRAVIS_PYTHON_VERSION == 3.6* ]]; then flake8; fi
+- if [[ $TRAVIS_PYTHON_VERSION == 3.6* ]]; then mypy . --ignore-missing-imports; fi
+
+after_success:
+- if [[ $TRAVIS_PYTHON_VERSION == 3.6* ]]; then
+  pytest --cov --cov-config=setup.cfg;
+  coveralls;
+  fi
+

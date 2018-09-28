@@ -1,20 +1,21 @@
 # Copyright (c) 2014-2018 Michael Hirsch, Ph.D.
-#
-# Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
-# 1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
-# 2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
 """
  Ported by Michael Hirsch to Python.
 """
+from typing import Tuple
 import logging
-from numpy import (atleast_1d,arctan,sqrt,tan,sign,sin,cos,arctan2,arcsin,
-                   ones,empty,zeros,radians,degrees,tile,nan,pi)
+from numpy import arctan, sqrt, tan, sign, sin, cos, arctan2, arcsin, nan, pi
+import numpy as np
+from .ecef import Ellipsoid
 
-def vdist(lat1,lon1,lat2,lon2):
+
+def vdist(Lat1: float, Lon1: float, Lat2: float, Lon2: float, ell: Ellipsoid = None) -> Tuple[float, float, float]:
     """
-    Using the WGS-84 Earth ellipsoid, compute the distance between two points within a few millimeters of accuracy, compute forward azimuth, and compute backward azimuth, all using a vectorized version of Vincenty's algorithm::
+    Using the WGS-84 Earth ellipsoid, compute the distance between two points
+    within a few millimeters of accuracy, compute forward azimuth,
+    and compute backward azimuth, all using a vectorized version of
+
+    Vincenty's algorithm::
 
         s = vdist(lat1,lon1,lat2,lon2)
         s,a12 = vdist(lat1,lon1,lat2,lon2)
@@ -39,11 +40,13 @@ def vdist(lat1,lon1,lat2,lon2):
         longitude of first point (degrees)
 
     lat2, lon2
-        second point (degrees)
+        second point(s) (degrees)
 
     Original algorithm source:
-    T. Vincenty, "Direct and Inverse Solutions of Geodesics on the Ellipsoid with Application of Nested Equations", Survey Review, vol. 23, no. 176,
-    April 1975, pp 88-93. Available at: http://www.ngs.noaa.gov/PUBS_LIB/inverse.pdf
+    T. Vincenty, "Direct and Inverse Solutions of Geodesics on the Ellipsoid
+    with Application of Nested Equations", Survey Review, vol. 23, no. 176,
+    April 1975, pp 88-93.
+    Available at: http://www.ngs.noaa.gov/PUBS_LIB/inverse.pdf
 
     Notes:
      1. lat1,lon1,lat2,lon2 can be any (identical) size/shape. Outputs  will have the same size and shape.
@@ -72,63 +75,73 @@ def vdist(lat1,lon1,lat2,lon2):
      12. No warranties; use at your own risk.
 
     """
-#%% reshape inputs
-    lat1 = atleast_1d(lat1)
-    lat2 = atleast_1d(lat2)
-    lon1 = atleast_1d(lon1)
-    lon2 = atleast_1d(lon2)
-    keepsize = lat1.shape
-#%% Input check:
+    if ell is None:
+        ell = Ellipsoid()
+# %% prepare inputs
+    lat1 = np.atleast_1d(Lat1)
+    lat2 = np.atleast_1d(Lat2)
+    lon1 = np.atleast_1d(Lon1)
+    lon2 = np.atleast_1d(Lon2)
+
+    assert lat1.shape == lon1.shape and lat2.shape == lon2.shape
+
+    if lat1.shape != lat2.shape:
+        if lat1.size == 1:
+            lat1 = np.broadcast_to(lat1, lat2.shape)
+            lon1 = np.broadcast_to(lon1, lon2.shape)
+
+        if lat2.size == 1:
+            lat2 = np.broadcast_to(lat2, lat1.shape)
+            lon2 = np.broadcast_to(lon2, lon1.shape)
+# %% Input check:
     if ((abs(lat1) > 90) | (abs(lat2) > 90)).any():
-        raise ValueError('Input latitudes must be between -90 and 90 degrees, inclusive.')
-#%%% Supply WGS84 earth ellipsoid axis lengths in meters:
-    a = 6378137 # definitionally
-    b = 6356752.31424518 # computed from WGS84 earth flattening coefficient
-#%% preserve true input latitudes:
+        raise ValueError('Input latitudes must be in [-90, 90] degrees.')
+# %% Supply WGS84 earth ellipsoid axis lengths in meters:
+    a = ell.a
+    b = ell.b
+# %% preserve true input latitudes:
     lat1tr = lat1.copy()
     lat2tr = lat2.copy()
-#%% convert inputs in degrees to radians:
-    lat1 = radians(lat1)
-    lon1 = radians(lon1)
-    lat2 = radians(lat2)
-    lon2 = radians(lon2)
-#%% correct for errors at exact poles by adjusting 0.6 millimeters:
-    kidx = abs(pi/2-abs(lat1)) < 1e-10;
+# %% convert inputs in degrees to np.radians:
+    lat1 = np.radians(lat1)
+    lon1 = np.radians(lon1)
+    lat2 = np.radians(lat2)
+    lon2 = np.radians(lon2)
+# %% correct for errors at exact poles by adjusting 0.6 millimeters:
+    kidx = abs(pi / 2 - abs(lat1)) < 1e-10
     if kidx.any():
-        lat1[kidx] = sign(lat1[kidx])*(pi/2-(1e-10))
+        lat1[kidx] = sign(lat1[kidx]) * (pi / 2 - (1e-10))
 
-    kidx = abs(pi/2-abs(lat2)) < 1e-10
+    kidx = abs(pi / 2 - abs(lat2)) < 1e-10
     if kidx.any():
-        lat2[kidx] = sign(lat2[kidx])*(pi/2-(1e-10))
+        lat2[kidx] = sign(lat2[kidx]) * (pi / 2 - (1e-10))
 
-    f = (a-b)/a
-    U1 = arctan((1-f)*tan(lat1))
-    U2 = arctan((1-f)*tan(lat2))
-    lon1 = lon1 % (2*pi)
-    lon2 = lon2 % (2*pi)
-    L = abs(lon2-lon1)
+    f = (a - b) / a
+    U1 = arctan((1 - f) * tan(lat1))
+    U2 = arctan((1 - f) * tan(lat2))
+    lon1 = lon1 % (2 * pi)
+    lon2 = lon2 % (2 * pi)
+    L = abs(lon2 - lon1)
     kidx = L > pi
     if kidx.any():
-        L[kidx] = 2*pi - L[kidx]
+        L[kidx] = 2 * pi - L[kidx]
 
     lamb = L.copy()  # NOTE: program will fail without copy!
-    lambdaold = zeros(lat1.shape)
+    lambdaold = np.zeros(lat1.shape)
     itercount = 0
-    notdone = ones(lat1.shape,dtype=bool)
-    alpha = zeros(lat1.shape)
-    sigma = zeros(lat1.shape)
-    cos2sigmam = zeros(lat1.shape)
-    C = zeros(lat1.shape)
+    notdone = np.ones(lat1.shape, dtype=bool)
+    alpha = np.zeros(lat1.shape)
+    sigma = np.zeros(lat1.shape)
+    cos2sigmam = np.zeros(lat1.shape)
+    C = np.zeros(lat1.shape)
     warninggiven = False
-    sinsigma = empty(notdone.shape)
-    cossigma = empty(notdone.shape)
+    sinsigma = np.empty(notdone.shape)
+    cossigma = np.empty(notdone.shape)
     while notdone.any():  # force at least one execution
-        #print('iter:',itercount)
-        #print(f'lambda[21752] = {lamb[21752],20}')
         itercount += 1
         if itercount > 50:
             if not warninggiven:
-                logging.warning('Essentially antipodal points encountered. Precision may be reduced slightly.')
+                logging.warning('Essentially antipodal points--precision may be reduced slightly.')
 
             lamb[notdone] = pi
             break
@@ -136,82 +149,89 @@ def vdist(lat1,lon1,lat2,lon2):
         lambdaold[notdone] = lamb[notdone]
 
         sinsigma[notdone] = sqrt(
-                (cos(U2[notdone])*sin(lamb[notdone]))**2+(cos(U1[notdone])*sin(U2[notdone])-sin(U1[notdone])*
-            cos(U2[notdone])*cos(lamb[notdone]))**2)
+            (cos(U2[notdone]) * sin(lamb[notdone]))**2 +
+            (cos(U1[notdone]) * sin(U2[notdone]) - sin(U1[notdone]) *
+             cos(U2[notdone]) * cos(lamb[notdone]))**2)
 
-        cossigma[notdone] = (sin(U1[notdone])*sin(U2[notdone])+
-            cos(U1[notdone])*cos(U2[notdone])*cos(lamb[notdone]))
+        cossigma[notdone] = (sin(U1[notdone]) * sin(U2[notdone]) +
+                             cos(U1[notdone]) * cos(U2[notdone]) *
+                             cos(lamb[notdone]))
         # eliminate rare imaginary portions at limit of numerical precision:
-        sinsigma[notdone]= sinsigma[notdone].real
-        cossigma[notdone]= cossigma[notdone].real
+        sinsigma[notdone] = sinsigma[notdone].real
+        cossigma[notdone] = cossigma[notdone].real
 
-        sigma[notdone] = arctan2(sinsigma[notdone],cossigma[notdone])
+        sigma[notdone] = arctan2(sinsigma[notdone], cossigma[notdone])
 
-        alpha[notdone] = (arcsin(cos(U1[notdone])*cos(U2[notdone])*
-            sin(lamb[notdone])/sin(sigma[notdone])))
+        alpha[notdone] = (arcsin(cos(U1[notdone]) * cos(U2[notdone]) *
+                                 sin(lamb[notdone]) / sin(sigma[notdone])))
 
-        cos2sigmam[notdone] = (cos(sigma[notdone])-2*sin(U1[notdone])*
-            sin(U2[notdone])/cos(alpha[notdone])**2)
+        cos2sigmam[notdone] = (cos(sigma[notdone]) - 2 * sin(U1[notdone]) *
+                               sin(U2[notdone]) / cos(alpha[notdone])**2)
 
-        C[notdone] = f/16*cos(alpha[notdone])**2*(4+f*(4-3*cos(alpha[notdone])**2))
+        C[notdone] = (f / 16 * cos(alpha[notdone])**2 *
+                      (4 + f * (4 - 3 * cos(alpha[notdone])**2)))
 
-        lamb[notdone] = (L[notdone]+(1-C[notdone])*f*sin(alpha[notdone])
-            *(sigma[notdone]+C[notdone]*sin(sigma[notdone])*
-            (cos2sigmam[notdone]+C[notdone]*cos(sigma[notdone])*
-            (-1+2.*cos2sigmam[notdone]**2))))
-        #print(f'then, lambda(21752) = {lamb[21752],20})
-        # correct for convergence failure in the case of essentially antipodal points
+        lamb[notdone] = (L[notdone] + (1 - C[notdone]) * f * sin(alpha[notdone]) *
+                         (sigma[notdone] + C[notdone] * sin(sigma[notdone]) *
+                          (cos2sigmam[notdone] + C[notdone] * cos(sigma[notdone]) *
+                           (-1 + 2. * cos2sigmam[notdone]**2))))
+        # print(f'then, lambda(21752) = {lamb[21752],20})
+        # correct for convergence failure for essentially antipodal points
         if (lamb[notdone] > pi).any():
             logging.warning('Essentially antipodal points encountered. Precision may be reduced slightly.')
             warninggiven = True
-            lambdaold[lamb>pi] = pi
-            lamb[lamb>pi] = pi
+            lambdaold[lamb > pi] = pi
+            lamb[lamb > pi] = pi
 
-        notdone = abs(lamb-lambdaold) > 1e-12
+        notdone = abs(lamb - lambdaold) > 1e-12
 
-    u2 = cos(alpha)**2*(a**2-b**2)/b**2
-    A = 1+u2/16384*(4096+u2*(-768+u2*(320-175*u2)))
-    B = u2/1024*(256+u2*(-128+u2*(74-47*u2)))
-    deltasigma = B*sin(sigma)*(cos2sigmam+B/4*(cos(sigma)*(-1+2*
-        cos2sigmam**2)-B/6*cos2sigmam*(-3+4*sin(sigma)**2)*(-3+4*cos2sigmam**2)))
+    u2 = cos(alpha)**2 * (a**2 - b**2) / b**2
+    A = 1 + u2 / 16384 * (4096 + u2 * (-768 + u2 * (320 - 175 * u2)))
+    B = u2 / 1024 * (256 + u2 * (-128 + u2 * (74 - 47 * u2)))
+    deltasigma = (B * sin(sigma) *
+                  (cos2sigmam + B / 4 * (cos(sigma) * (-1 + 2 * cos2sigmam**2) -
+                                         B / 6 * cos2sigmam * (-3 + 4 * sin(sigma)**2) * (-3 + 4 * cos2sigmam**2))))
 
-    dist_m = (b*A*(sigma-deltasigma)).reshape(keepsize)
+    dist_m = (b * A * (sigma - deltasigma))
 
-#%% From point #1 to point #2
+# %% From point #1 to point #2
     # correct sign of lambda for azimuth calcs:
     lamb = abs(lamb)
-    kidx=sign(sin(lon2-lon1)) * sign(sin(lamb)) < 0
+    kidx = sign(sin(lon2 - lon1)) * sign(sin(lamb)) < 0
     lamb[kidx] = -lamb[kidx]
-    numer = cos(U2)*sin(lamb)
-    denom = cos(U1)*sin(U2)-sin(U1)*cos(U2)*cos(lamb)
-    a12 = arctan2(numer,denom)
+    numer = cos(U2) * sin(lamb)
+    denom = cos(U1) * sin(U2) - sin(U1) * cos(U2) * cos(lamb)
+    a12 = arctan2(numer, denom)
     kidx = a12 < 0
-    a12[kidx]=a12[kidx] + 2*pi
-    #%% from poles
+    a12[kidx] = a12[kidx] + 2 * pi
+    # %% from poles
     a12[lat1tr <= -90] = 0
-    a12[lat1tr >=  90] = pi
-    az = degrees(a12).reshape(keepsize)
+    a12[lat1tr >= 90] = pi
+    az = np.degrees(a12)
 
-#%% From point #2 to point #1
+# %% From point #2 to point #1
     # correct sign of lambda for azimuth calcs:
-    lamb = abs(lamb);
-    kidx=sign(sin(lon1-lon2)) * sign(sin(lamb)) < 0
-    lamb[kidx]=-lamb[kidx]
-    numer = cos(U1)*sin(lamb)
-    denom = sin(U1)*cos(U2)-cos(U1)*sin(U2)*cos(lamb)
-    a21 = arctan2(numer,denom)
-    kidx=a21<0;
-    a21[kidx] = a21[kidx] + 2*pi
-    #%% backwards from poles:
+    lamb = abs(lamb)
+    kidx = sign(sin(lon1 - lon2)) * sign(sin(lamb)) < 0
+    lamb[kidx] = -lamb[kidx]
+    numer = cos(U1) * sin(lamb)
+    denom = sin(U1) * cos(U2) - cos(U1) * sin(U2) * cos(lamb)
+    a21 = arctan2(numer, denom)
+    kidx = a21 < 0
+    a21[kidx] = a21[kidx] + 2 * pi
+    # %% backwards from poles:
     a21[lat2tr >= 90] = pi
     a21[lat2tr <= -90] = 0.
-    backaz = degrees(a21).reshape(keepsize)
+    backaz = np.degrees(a21)
 
     return dist_m.squeeze()[()], az.squeeze()[()], backaz.squeeze()[()]
 
 
-def vreckon(lat1, lon1, rng, azim, ellipsoid=None):
+def vreckon(Lat1: float, Lon1: float, Rng: float, Azim: float,
+            ell: Ellipsoid = None) -> Tuple[float, float, float]:
     """
+    This is the Vincenty "forward" solution.
+
     Computes points at a specified azimuth and range in an ellipsoidal earth.
     Using the WGS-84 Earth ellipsoid, travel a given distance along a given azimuth starting at a given initial point,
     and return the endpoint within a few millimeters of accuracy, using Vincenty's algorithm.
@@ -270,51 +290,40 @@ def vreckon(lat1, lon1, rng, azim, ellipsoid=None):
 
     """
 
-    lat1 = atleast_1d(lat1)
-    lon1 = atleast_1d(lon1)
-    rng = atleast_1d(rng)
-    azim = atleast_1d(azim)
+    lat1 = np.atleast_1d(Lat1)
+    lon1 = np.atleast_1d(Lon1)
+    rng = np.atleast_1d(Rng)
+    azim = np.atleast_1d(Azim)
 
-    assert abs(lat1) <= 90, (
-        'VRECKON: Input lat. must be between -90 and 90 deg., inclusive.')
-    if lat1.size != 1 and rng.size > 1:
-        raise ValueError(
-            'VRECKON: Variable ranges are only allowed for a single point.')
-    if ellipsoid is not None:  # An ellipsoid vector (with a & b OR a & f)
-        a = ellipsoid[0]           # b = ellipsoid(2);
-        # Second ellipsoid argument contains flattening instead of minor axis
-        if ellipsoid[1] < 1:
-            f = ellipsoid[1]
-            b = a * (1 - f)
-        else:               # Second ellipsoid argument contains minor axis
-            f = (a - ellipsoid[1]) / a
+    if rng.ndim != 1 or azim.ndim != 1:
+        raise ValueError('Range and azimuth must be scalar or vector')
+
+    if abs(lat1) > 90:
+        raise ValueError('VRECKON: Input lat. must be between -90 and 90 deg., inclusive.')
+
+    if lat1.size > 1 and rng.size > 1:
+        raise ValueError('VRECKON: Variable ranges are only allowed for a single point.')
+
+    if ell is not None:
+        a = ell.a
+        b = ell.b
+        f = ell.f
     else:   # Supply WGS84 earth ellipsoid axis lengths in meters:
         a = 6378137                 # semimajor axis
         b = 6356752.31424518   # WGS84 earth flattening coefficient definition
         f = (a - b) / a
 
-    lat1 = radians(lat1)            # intial latitude in radians
-    lon1 = radians(lon1)            # intial longitude in radians
+    lat1 = np.radians(lat1)            # intial latitude in radians
+    lon1 = np.radians(lon1)            # intial longitude in radians
 
     # correct for errors at exact poles by adjusting 0.6 millimeters:
     kidx = abs(pi / 2 - abs(lat1)) < 1e-10
     lat1[kidx] = sign(lat1[kidx]) * (pi / 2 - (1e-10))
 
-    #  Allow for multiple circles starting from the same point
-    if lat1.size == 1 and lon1.size == 1 and rng.size > 1:
-        lat1 = tile(lat1, rng.shape)
-        lon1 = tile(lon1, rng.shape)
+    if rng.size != azim.size and rng.size == 1:
+        rng = np.broadcast_to(rng, azim.size)
 
-    if rng.size == 1:
-        rng = tile(rng, azim.shape)
-
-    if azim.size == 1:
-        azim = tile(azim, rng.shape)
-
-    assert rng.size == azim.shape[0], (
-        'Range must be a scalar or vector with the same shape as azim.')
-
-    alpha1 = radians(azim)  # inital azimuth in radians
+    alpha1 = np.radians(azim)  # inital azimuth in radians
     sinAlpha1 = sin(alpha1)
     cosAlpha1 = cos(alpha1)
 
@@ -327,8 +336,9 @@ def vreckon(lat1, lon1, rng, azim, ellipsoid=None):
     uSq = cosSqAlpha * (a**2 - b**2) / b**2
     A = 1 + uSq / 16384 * (4096 + uSq * (-768 + uSq * (320 - 175 * uSq)))
     B = uSq / 1024 * (256 + uSq * (-128 + uSq * (74 - 47 * uSq)))
+
     sigma = rng / (b * A)
-    sigmaP = 2*pi
+    sigmaP = 2 * pi
 
     if sigma.size == 1:
         sinSigma = nan
@@ -348,9 +358,9 @@ def vreckon(lat1, lon1, rng, azim, ellipsoid=None):
             sigma = rng / (b * A) + deltaSigma
     else:
         # This part is not vectorized
-        cos2SigmaM = empty(sigma.shape)
-        sinSigma = empty(sigma.shape)
-        cosSigma = empty(sigma.shape)
+        cos2SigmaM = np.empty(sigma.size)
+        sinSigma = np.empty(sigma.size)
+        cosSigma = np.empty(sigma.size)
 
         for k in range(sigma.size):
             while (abs(sigma[k] - sigmaP) > 1e-12).any():
@@ -380,7 +390,7 @@ def vreckon(lat1, lon1, rng, azim, ellipsoid=None):
                             (cos2SigmaM + C * cosSigma *
                              (-1 + 2 * cos2SigmaM * cos2SigmaM))))
 
-    lon2 = degrees(lon1 + L)
+    lon2 = np.degrees(lon1 + L)
 
     # Truncates angles into the [-pi pi] range
     # if (lon2 > pi).any():
@@ -391,6 +401,77 @@ def vreckon(lat1, lon1, rng, azim, ellipsoid=None):
     lon2 = (lon2 + 180) % 360 - 180  # no parenthesis on RHS
 
     a21 = arctan2(sinAlpha, -tmp)
-    a21 = 180. + degrees(a21)  # note direction reversal
+    a21 = 180. + np.degrees(a21)  # note direction reversal
 
-    return degrees(lat2).squeeze()[()], lon2.squeeze()[()], a21.squeeze()[()] % 360.
+    return np.degrees(lat2).squeeze()[()], lon2.squeeze()[()], a21.squeeze()[()] % 360.
+
+
+def track2(lat1: float, lon1: float, lat2: float, lon2: float,
+           ell: Ellipsoid = None, npts: int = 100, deg: bool = True):
+    """
+     computes great circle tracks starting at the point lat1, lon1 and ending at lat2, lon2
+
+     input
+     -----
+     lat1
+     GEODETIC latitude of first point (degrees/radians)
+
+     lon1
+     longitude of first point (degrees/radians)
+
+     lat2, lon2
+     second point (degrees/radians)
+
+     ell    reference ellipsoid
+     npts   number of points (default is 100)
+     deg    degrees input/output  (False: radians in/out)
+
+     output
+     ------
+     lats, lons  latitudes and longitudes of points along great circle track
+
+     Based on code posted to the GMT mailing list in Dec 1999 by Jim Levens and by Jeff Whitaker <jeffrey.s.whitaker@noaa.gov>
+     """
+
+    if ell is None:
+        ell = Ellipsoid()
+
+    if npts <= 1:
+        raise ValueError('npts must be greater than 1')
+
+    if npts == 2:
+        return [lat1, lat2], [lon1, lon2]
+
+    if deg is True:
+        rlat1, rlon1, rlat2, rlon2 = np.radians([lat1, lon1, lat2, lon2])
+    else:
+        rlat1, rlon1, rlat2, rlon2 = lat1, lon1, lat2, lon2
+
+    gcarclen = 2. * np.arcsin(np.sqrt((np.sin((rlat1 - rlat2) / 2))**2 +
+                                      np.cos(rlat1) * np.cos(rlat2) * (np.sin((rlon1 - rlon2) / 2))**2))
+    # check to see if points are antipodal (if so, route is undefined).
+    if np.allclose(gcarclen, pi):
+        raise ValueError('cannot compute intermediate points on a great circle whose endpoints are antipodal')
+
+    distance, azimuth, _ = vdist(lat1, lon1, lat2, lon2)
+    incdist = distance / (npts - 1)
+
+    latpt = lat1
+    lonpt = lon1
+    lons = [lonpt]
+    lats = [latpt]
+    for n in range(npts - 2):
+        latptnew, lonptnew, _ = vreckon(latpt, lonpt, incdist, azimuth)
+        _, azimuth, _ = vdist(latptnew, lonptnew, lat2, lon2, ell=ell)
+        lats.append(latptnew)
+        lons.append(lonptnew)
+        latpt = latptnew
+        lonpt = lonptnew
+    lons.append(lon2)
+    lats.append(lat2)
+
+    if not deg:
+        lats = np.radians(lats)
+        lons = np.radians(lons)
+
+    return lats, lons

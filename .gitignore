@@ -1,3 +1,5 @@
+.eggs/
+.mypy_cache/
 .pytest_cache/
 
 bin/
@@ -7,6 +9,7 @@ doctrees/
 
 *.out
 *.mod
+*.smod
 *~
 
 # Byte-compiled / optimized / DLL files
